@@ -34,14 +34,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "yarn"
 
       - name: Install dependencies
-        run: |
-          if [ -f "yarn.lock" ]; then
-            yarn install --frozen-lockfile --ignore-scripts
-          else
-            npm ci --ignore-scripts
-          fi
+        run: yarn install --frozen-lockfile --ignore-scripts
 
       - name: Run Snyk SCA
         uses: snyk/actions/node@master
