@@ -1,0 +1,135 @@
+name: Reusable - Python Security
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-high:
+        description: "Block pipeline on HIGH/CRITICAL findings"
+        type: boolean
+        default: true
+
+jobs:
+  check-bypass:
+    name: Check Security Bypass
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.bypass.outputs.skip }}
+    steps:
+      - name: Evaluate bypass conditions
+        id: bypass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SKIP="false"
+          if echo "${{ github.event.head_commit.message }}" | grep -qiE '\[skip security\]|\[security bypass\]'; then
+            SKIP="true"
+            echo "⚠️ Security bypass triggered via commit message"
+          fi
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            LABELS=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --jq '.[].name' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "security-bypass"; then
+              SKIP="true"
+              echo "⚠️ Security bypass triggered via PR label"
+            fi
+          fi
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+
+  secrets-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    needs: check-bypass
+    if: needs.check-bypass.outputs.skip != 'true'
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sca-snyk:
+    name: SCA - Dependency Check (Snyk)
+    runs-on: ubuntu-latest
+    needs: check-bypass
+    if: needs.check-bypass.outputs.skip != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Snyk SCA
+        uses: snyk/actions/python-3.10@master
+        with:
+          args: --severity-threshold=high --file=requirements.txt
+        continue-on-error: ${{ !inputs.fail-on-high }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  sast-snyk:
+    name: SAST - Code Analysis (Snyk Code)
+    runs-on: ubuntu-latest
+    needs: check-bypass
+    if: needs.check-bypass.outputs.skip != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Snyk Code (JSON output)
+        run: |
+          npm install -g snyk
+          snyk auth ${{ secrets.SNYK_TOKEN }}
+          snyk code test --json > snyk-code-results.json || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Check for HIGH/CRITICAL findings
+        run: |
+          HIGH=$(python3 -c "
+          import json, sys
+          try:
+              data = json.load(open('snyk-code-results.json'))
+              runs = data.get('runs', [])
+              count = 0
+              for run in runs:
+                  for result in run.get('results', []):
+                      level = result.get('level', '')
+                      rule_id = result.get('ruleId', '')
+                      rules = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}
+                      rule = rules.get(rule_id, {})
+                      sev = rule.get('properties', {}).get('tags', [])
+                      if 'high' in [s.lower() for s in sev] or level == 'error':
+                          count += 1
+              print(count)
+          except Exception as e:
+              print(0)
+          ")
+          echo "HIGH/CRITICAL findings: $HIGH"
+          if [ "$HIGH" -gt "0" ] && [ "${{ inputs.fail-on-high }}" == "true" ]; then
+            echo "❌ Snyk Code found $HIGH HIGH/CRITICAL issues. Pipeline blocked."
+            exit 1
+          fi
+
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [check-bypass, secrets-scan, sca-snyk, sast-snyk]
+    if: always()
+    steps:
+      - name: Check security results
+        run: |
+          BYPASS="${{ needs.check-bypass.outputs.skip }}"
+          if [ "$BYPASS" == "true" ]; then
+            echo "⚠️ Security bypass activated. Gate passing."
+            exit 0
+          fi
+          SECRETS="${{ needs.secrets-scan.result }}"
+          SCA="${{ needs.sca-snyk.result }}"
+          SAST="${{ needs.sast-snyk.result }}"
+          echo "Results — Gitleaks: $SECRETS | Snyk SCA: $SCA | Snyk Code: $SAST"
+          if [ "$SECRETS" == "failure" ] || [ "$SCA" == "failure" ] || [ "$SAST" == "failure" ]; then
+            echo "❌ Security gate failed. Fix vulnerabilities or apply security-bypass label."
+            exit 1
+          fi
+          echo "✅ Security gate passed."
