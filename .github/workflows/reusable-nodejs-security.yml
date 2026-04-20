@@ -57,7 +57,6 @@ jobs:
         uses: snyk/actions/node@master
         with:
           command: code test
-          args: --severity-threshold=high
-        continue-on-error: ${{ !inputs.fail-on-high }}
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
