@@ -1,0 +1,90 @@
+name: Reusable - Terraform Security
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-high:
+        description: "Block pipeline on HIGH/CRITICAL findings"
+        type: boolean
+        default: true
+
+jobs:
+  check-bypass:
+    name: Check Security Bypass
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.bypass.outputs.skip }}
+    steps:
+      - name: Evaluate bypass conditions
+        id: bypass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SKIP="false"
+          if echo "${{ github.event.head_commit.message }}" | grep -qiE '\[skip security\]|\[security bypass\]'; then
+            SKIP="true"
+            echo "⚠️ Security bypass triggered via commit message"
+          fi
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            LABELS=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --jq '.[].name' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "security-bypass"; then
+              SKIP="true"
+              echo "⚠️ Security bypass triggered via PR label"
+            fi
+          fi
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+
+  secrets-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    needs: check-bypass
+    if: needs.check-bypass.outputs.skip != 'true'
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  iac-snyk:
+    name: IaC - Terraform Scan (Snyk)
+    runs-on: ubuntu-latest
+    needs: check-bypass
+    if: needs.check-bypass.outputs.skip != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Snyk IaC
+        uses: snyk/actions/iac@master
+        with:
+          args: --severity-threshold=high
+        continue-on-error: ${{ !inputs.fail-on-high }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [check-bypass, secrets-scan, iac-snyk]
+    if: always()
+    steps:
+      - name: Check security results
+        run: |
+          BYPASS="${{ needs.check-bypass.outputs.skip }}"
+          if [ "$BYPASS" == "true" ]; then
+            echo "⚠️ Security bypass activated. Gate passing."
+            exit 0
+          fi
+          SECRETS="${{ needs.secrets-scan.result }}"
+          IAC="${{ needs.iac-snyk.result }}"
+          echo "Results — Gitleaks: $SECRETS | Snyk IaC: $IAC"
+          if [ "$SECRETS" == "failure" ] || [ "$IAC" == "failure" ]; then
+            echo "❌ Security gate failed. Fix vulnerabilities or apply security-bypass label."
+            exit 1
+          fi
+          echo "✅ Security gate passed."
