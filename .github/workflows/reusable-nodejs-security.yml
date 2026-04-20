@@ -45,3 +45,19 @@ jobs:
         continue-on-error: ${{ !inputs.fail-on-high }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  sast-snyk:
+    name: SAST - Code Analysis (Snyk Code)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Snyk Code
+        uses: snyk/actions/node@master
+        with:
+          command: code test
+          args: --severity-threshold=high
+        continue-on-error: ${{ !inputs.fail-on-high }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
