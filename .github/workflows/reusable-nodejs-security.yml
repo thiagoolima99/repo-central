@@ -22,3 +22,26 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sca-snyk:
+    name: SCA - Dependency Check (Snyk)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Snyk SCA
+        uses: snyk/actions/node@master
+        with:
+          args: --severity-threshold=high
+        continue-on-error: ${{ !inputs.fail-on-high }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
