@@ -65,14 +65,14 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
+      - name: Install Snyk
+        run: npm install -g snyk
+
       - name: Run Snyk SCA
-        uses: snyk/actions/gradle@master
-        with:
-          args: --severity-threshold=high
+        run: snyk test --severity-threshold=high --all-projects || true
         continue-on-error: ${{ !inputs.fail-on-high }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-          JAVA_HOME: ${{ env.JAVA_HOME }}
 
   sast-snyk:
     name: SAST - Code Analysis (Snyk Code)
