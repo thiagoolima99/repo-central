@@ -72,6 +72,7 @@ jobs:
         continue-on-error: ${{ !inputs.fail-on-high }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
 
   sast-snyk:
     name: SAST - Code Analysis (Snyk Code)
