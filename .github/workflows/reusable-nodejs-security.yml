@@ -53,10 +53,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Snyk Code
-        uses: snyk/actions/node@master
-        with:
-          command: code test
-        continue-on-error: true
+      - name: Run Snyk Code (JSON output)
+        run: |
+          npm install -g snyk
+          snyk auth ${{ secrets.SNYK_TOKEN }}
+          snyk code test --json > snyk-code-results.json || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Check for HIGH/CRITICAL findings
+        run: |
+          HIGH=$(python3 -c "
+          import json, sys
+          try:
+              data = json.load(open('snyk-code-results.json'))
+              runs = data.get('runs', [])
+              count = 0
+              for run in runs:
+                  for result in run.get('results', []):
+                      level = result.get('level', '')
+                      if level in ['error', 'warning']:
+                          props = result.get('properties', {})
+                          severity = props.get('priorityScore', 0)
+                          rule_id = result.get('ruleId', '')
+                          # Check severity via rule metadata
+                          rules = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}
+                          rule = rules.get(rule_id, {})
+                          sev = rule.get('properties', {}).get('tags', [])
+                          if 'high' in [s.lower() for s in sev] or level == 'error':
+                              count += 1
+              print(count)
+          except Exception as e:
+              print(0)
+          ")
+          echo "HIGH/CRITICAL findings: $HIGH"
+          if [ "$HIGH" -gt "0" ] && [ "${{ inputs.fail-on-high }}" == "true" ]; then
+            echo "❌ Snyk Code found $HIGH HIGH/CRITICAL issues. Pipeline blocked."
+            exit 1
+          fi
