@@ -113,3 +113,26 @@ jobs:
             echo "❌ Snyk Code found $HIGH HIGH/CRITICAL issues. Pipeline blocked."
             exit 1
           fi
+
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [check-bypass, secrets-scan, sca-snyk, sast-snyk]
+    if: always()
+    steps:
+      - name: Check security results
+        run: |
+          BYPASS="${{ needs.check-bypass.outputs.skip }}"
+          if [ "$BYPASS" == "true" ]; then
+            echo "⚠️ Security bypass activated. Gate passing."
+            exit 0
+          fi
+          SECRETS="${{ needs.secrets-scan.result }}"
+          SCA="${{ needs.sca-snyk.result }}"
+          SAST="${{ needs.sast-snyk.result }}"
+          echo "Results — Gitleaks: $SECRETS | Snyk SCA: $SCA | Snyk Code: $SAST"
+          if [ "$SECRETS" == "failure" ] || [ "$SCA" == "failure" ] || [ "$SAST" == "failure" ]; then
+            echo "❌ Security gate failed. Fix vulnerabilities or apply security-bypass label."
+            exit 1
+          fi
+          echo "✅ Security gate passed."
