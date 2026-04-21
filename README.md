@@ -72,8 +72,8 @@ O TruffleHog vai além do Gitleaks ao validar ativamente se o secret encontrado 
 - **Gitleaks**: 0 findings
 - **Snyk SCA**: vulnerabilidades encontradas — pipeline bloqueado
 - **Snyk Code**: findings encontrados — pipeline bloqueado
-- **OWASP ZAP (DAST)**: a ser configurado
-- **Observação**: vulnerabilidades de lógica (IDOR, broken access control) não são detectáveis por SAST — requer DAST
+- **OWASP ZAP (DAST)**: 7 findings (3 low, 4 info) em scan não autenticado — roda após merge no master
+- **Observação**: vulnerabilidades de lógica (IDOR, broken access control) não são detectáveis por SAST — o ZAP sem autenticação também não cobre endpoints protegidos por JWT
 
 ### Terragoat (Terraform)
 - **Gitleaks**: 0 findings
@@ -83,34 +83,49 @@ O TruffleHog vai além do Gitleaks ao validar ativamente se o secret encontrado 
 ### diva-android (Java/Android)
 - **Gitleaks**: 0 findings
 - **Snyk Code**: 0 findings HIGH/CRITICAL — pipeline passou
-- **Snyk SCA**: não suportado (ver limitações abaixo)
+- **Snyk SCA**: não suportado — Gradle 2.4 incompatível com ferramentas modernas
+- **DAST**: não implementado — APK não compilável no CI (ver limitações abaixo)
 
 ---
 
 ## Limitações identificadas
 
-### diva-android — SCA não suportado
-O projeto usa Gradle 2.4 (2015), incompatível com o Snyk SCA. O Gradle desatualizado é em si um risco de segurança — versões antigas não recebem patches e podem conter vulnerabilidades conhecidas. Atualizar exigiria refatoração do projeto.
+### diva-android — SCA e DAST não suportados
+O projeto usa Gradle 2.4 (2015), incompatível com ferramentas modernas de análise. O Gradle desatualizado impede:
+- **Snyk SCA** — não consegue resolver as dependências via Gradle
+- **Compilação do APK no CI** — sem APK, não há como rodar MobSF ou DAST dinâmico
+- **CodeQL** — precisa compilar o projeto para construir o grafo de fluxo de dados
 
-### VAmPI e diva-android — vulnerabilidades de lógica
-Ferramentas de SAST não detectam vulnerabilidades comportamentais como IDOR, broken access control e armazenamento inseguro. Para esses casos, recomenda-se:
-- **OWASP ZAP** para APIs REST (DAST)
-- **MobSF** para apps Android (análise estática mobile-específica)
+O Gradle desatualizado é em si um risco de segurança — versões antigas não recebem patches de segurança. A recomendação é atualizar o projeto para Gradle 8.x + Android Gradle Plugin compatível.
+
+**Para DAST em Android em projetos modernos**, as opções seriam:
+- **MobSF** — análise do APK compilado (permissões, componentes exportados, configurações inseguras de rede)
+- **Drozer** — testes dinâmicos via emulador Android (mais completo, mais complexo)
+
+### VAmPI — vulnerabilidades de lógica não detectadas por SAST/DAST sem autenticação
+O VAmPI tem vulnerabilidades intencionais de lógica (IDOR, broken access control, mass assignment) que não são detectáveis por SAST. O ZAP sem autenticação também não cobre esses casos — os endpoints vulneráveis exigem token JWT. Para cobertura completa, seria necessário configurar autenticação no ZAP com as credenciais de teste da API.
 
 ### Gitleaks — 0 findings em todos os repositórios
 Esperado — os projetos são open source e não contêm secrets reais. Em repositórios corporativos, o Gitleaks teria maior impacto detectando tokens e credenciais commitados acidentalmente.
 
-### DAST — scan não autenticado
-O OWASP ZAP foi configurado para rodar após o merge no master, subindo a aplicação via Docker no próprio CI. O scan roda sem autenticação — o que limita a cobertura a rotas públicas. Com autenticação, o ZAP teria acesso a rotas protegidas e detectaria vulnerabilidades como IDOR e broken access control.
+### DAST — scan não autenticado e decisão de custo
 
-Configurar autenticação em SPAs (Single Page Applications) como o Juice Shop (Angular) é complexo — o ZAP precisa entender o fluxo de login via JavaScript, o que exige um arquivo de contexto customizado e testes adicionais. Estimativa: 2-3 horas de esforço adicional.
+O OWASP ZAP foi configurado para rodar após o merge no master, subindo a aplicação via Docker diretamente no CI (sem necessidade de ambiente externo). O scan roda sem autenticação — limitando a cobertura a rotas públicas.
 
-**Decisão de custo do DAST:**
-O DAST não foi incluído no pipeline de PR por dois motivos:
+**Por que sem autenticação?**
+- **Juice Shop** usa Angular (SPA) — autenticar o ZAP em SPAs exige arquivo de contexto customizado para o ZAP entender o fluxo de login via JavaScript. Estimativa: 2-3 horas de esforço adicional
+- **VAmPI** usa JWT — configurar o ZAP para obter e renovar tokens JWT é possível mas adiciona complexidade ao workflow
+
+**Por que o DAST não está no pipeline de PR?**
+O DAST foi colocado intencionalmente fora do pipeline de PR por dois motivos:
 1. **Tempo** — subir a aplicação + executar o scan adiciona 10-15 minutos por PR, atrasando o feedback do desenvolvedor
-2. **Complexidade** — orquestrar o ambiente (banco de dados, seeds, usuários de teste) é custoso de manter
+2. **Complexidade operacional** — orquestrar o ambiente (banco de dados, seeds, usuários de teste) é custoso de manter e tende a gerar falhas intermitentes não relacionadas a segurança
 
-A arquitetura adotada separa as responsabilidades: SAST + SCA bloqueiam no PR (rápido), DAST roda após merge no master (completo). Em ambientes com staging dedicado, o DAST seria executado contra o ambiente já provisionado, eliminando o custo de subir a aplicação no CI.
+A arquitetura adotada separa as responsabilidades:
+- **Pipeline de PR** — SAST + SCA + Secret Scanning: rápido, bloqueante, feedback imediato
+- **Pipeline pós-merge** — DAST: completo, não bloqueante, resultados viram issues para o time de segurança
+
+Em ambientes com staging dedicado, o DAST seria executado contra o ambiente já provisionado — eliminando o custo de subir a aplicação no CI e permitindo autenticação real com usuários de teste.
 
 ---
 
