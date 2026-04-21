@@ -36,6 +36,7 @@ Cada repositório de aplicação chama o workflow central via `workflow_call`, m
 | Snyk SCA | Análise de dependências | Juice Shop, VAmPI | Bloqueante em HIGH/CRITICAL |
 | Snyk Code | SAST | Juice Shop, VAmPI, diva-android | Bloqueante em HIGH/CRITICAL |
 | Snyk IaC | IaC Misconfiguration | Terragoat | Bloqueante em HIGH/CRITICAL |
+| OWASP ZAP | DAST | Juice Shop, VAmPI | Não bloqueante — roda após merge |
 
 ---
 
@@ -65,11 +66,13 @@ O TruffleHog vai além do Gitleaks ao validar ativamente se o secret encontrado 
 - **Gitleaks**: 0 findings — nenhum secret exposto
 - **Snyk SCA**: 40 vulnerabilidades (incluindo RCE em vm2, Authentication Bypass em jsonwebtoken, Sandbox Bypass) — pipeline bloqueado
 - **Snyk Code**: 25 findings HIGH (SQL Injection, NoSQL Injection, XSS, SSRF, Path Traversal, Hardcoded Secrets) — pipeline bloqueado
+- **OWASP ZAP (DAST)**: 14 findings em scan não autenticado — roda após merge no master
 
 ### VAmPI (Python/Flask)
 - **Gitleaks**: 0 findings
 - **Snyk SCA**: vulnerabilidades encontradas — pipeline bloqueado
 - **Snyk Code**: findings encontrados — pipeline bloqueado
+- **OWASP ZAP (DAST)**: a ser configurado
 - **Observação**: vulnerabilidades de lógica (IDOR, broken access control) não são detectáveis por SAST — requer DAST
 
 ### Terragoat (Terraform)
@@ -96,6 +99,18 @@ Ferramentas de SAST não detectam vulnerabilidades comportamentais como IDOR, br
 
 ### Gitleaks — 0 findings em todos os repositórios
 Esperado — os projetos são open source e não contêm secrets reais. Em repositórios corporativos, o Gitleaks teria maior impacto detectando tokens e credenciais commitados acidentalmente.
+
+### DAST — scan não autenticado
+O OWASP ZAP foi configurado para rodar após o merge no master, subindo a aplicação via Docker no próprio CI. O scan roda sem autenticação — o que limita a cobertura a rotas públicas. Com autenticação, o ZAP teria acesso a rotas protegidas e detectaria vulnerabilidades como IDOR e broken access control.
+
+Configurar autenticação em SPAs (Single Page Applications) como o Juice Shop (Angular) é complexo — o ZAP precisa entender o fluxo de login via JavaScript, o que exige um arquivo de contexto customizado e testes adicionais. Estimativa: 2-3 horas de esforço adicional.
+
+**Decisão de custo do DAST:**
+O DAST não foi incluído no pipeline de PR por dois motivos:
+1. **Tempo** — subir a aplicação + executar o scan adiciona 10-15 minutos por PR, atrasando o feedback do desenvolvedor
+2. **Complexidade** — orquestrar o ambiente (banco de dados, seeds, usuários de teste) é custoso de manter
+
+A arquitetura adotada separa as responsabilidades: SAST + SCA bloqueiam no PR (rápido), DAST roda após merge no master (completo). Em ambientes com staging dedicado, o DAST seria executado contra o ambiente já provisionado, eliminando o custo de subir a aplicação no CI.
 
 ---
 
